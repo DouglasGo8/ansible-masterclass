@@ -1,0 +1,732 @@
+= Ansible Master Class
+
+== Links
+
+- https://www.udemy.com/course/red-hat-system-administration-lll/[Red Hat Ansible Automation Training – RHEL 8/9 (RH294) 2026]
+- https://www.udemy.com/course/rundeck-automacao-e-a-lei/[Rundek is the Law]
+
+.Initial Architecture
+image::./thumbs/ansible_aws-setup.png[,]
+
+== Section 02: Getting Started with Ansible on AWS
+
+=== Overview
+
+This section covers the complete setup of an Ansible environment on AWS using Infrastructure-as-Code (Terraform).
+The architecture includes:
+
+- **1x Control Node** (RHEL 10.1, t4g.micro, public subnet) — runs Ansible
+- **2x Managed Nodes** (RHEL 10.1, t4g.micro, private subnets) — orchestrated by Ansible
+- **VPC with NAT Gateway** — enables private subnet instances to reach the internet
+- **SSH Key-Based Authentication** — automated via Terraform provisioners
+- **Full IaC Automation** — zero manual configuration
+
+=== Infrastructure Setup
+
+==== Step 1: Find and Validate RHEL 10 AMI
+
+Search for the latest RHEL 10 ARM64 (Graviton) AMI in sa-east-1:
+
+.Find Appropriated AMI
+[source,bash]
+----
+aws ec2 describe-images \
+  --owners 309956199498 \
+  --filters "Name=name,Values=RHEL-10*" \
+  --region sa-east-1 \
+  --query 'Images[*].[ImageId,Name,Architecture]' \
+  --output table
+----
+
+This returns all available RHEL 10 images.
+We selected `RHEL-10.1.0_HVM-20260331-arm64` for cost efficiency (t4g Graviton instances are ~20% cheaper than x86).
+
+==== Step 2: Terraform Infrastructure
+
+The infrastructure is defined in `iac/` directory:
+
+- `vpc/vpc.tf` — VPC, IGW, subnets, route tables
+- `section02/variables.tf` — configurable parameters
+- `section02/control-node.tf` — Control Node EC2 + provisioner
+- `section02/managed-nodes.tf` — 2x Managed Nodes using Terraform Registry module
+- `section02/sg.tf` — Security Group (SSH open, all egress)
+- `section02/outputs.tf` — infrastructure details
+
+===== Key Configuration
+
+**Control Node:**
+- Public subnet (10.0.101.0/24) - Elastic IP for stable access - File provisioner copies SSH private key after boot - user_data installs Ansible, Python, git
+
+**Managed Nodes:**
+- Private subnets (10.0.1.0/24, 10.0.2.0/24) - NAT Gateway for outbound connectivity - SSH key inherited via `key_name` parameter - user_data installs Python, SSH, git, firewalld
+
+===== Deployment
+
+[source,bash]
+----
+cd iac/
+
+# Validate Terraform
+terraform fmt
+terraform validate
+
+# Plan infrastructure
+terraform plan
+
+# Apply infrastructure
+terraform apply -auto-approve
+
+# Capture outputs for reference
+terraform output -json > outputs.json
+----
+
+===== Terraform Outputs
+
+After `terraform apply`, key outputs include:
+
+[source,text]
+----
+control_node_public_ip = "xx.xx.xx.xxx"
+control_node_private_ip = "xx.x.xxx.xx"
+managed_nodes_private_ips = [
+  "xx.x.x.xxx",
+  "xx.x.x.xx",
+]
+rhel_ami_name = "RHEL-10.1.0_HVM-20260331-arm64-0-Hourly2-GP3"
+instance_type = "t4g.micro"
+----
+
+=== Ansible Control Node Setup
+
+==== SSH Access
+
+SSH into the Control Node using the Elastic IP:
+
+[source,bash]
+----
+ssh -i ../../.secret/generic/key.pem ec2-user@xx.xx.xx.xxx
+----
+
+==== Verify Installation
+
+On the Control Node, verify all components are installed:
+
+[source,bash]
+----
+# Check Ansible version
+ansible --version
+
+# Output:
+# ansible [core 2.16.14]
+#   config file = /etc/ansible/ansible.cfg
+#   configured module search path = ['/home/ec2-user/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+#   ansible python module location = /usr/lib/python3.12/site-packages/ansible
+#   ansible collection location = /home/ec2-user/.ansible/collections:/usr/share/ansible/collections
+#   executable location = /usr/bin/ansible
+#   python version = 3.12.12
+
+# Check SSH private key is in place
+cat ~/.ssh/id_rsa | head -5
+# Output: -----BEGIN OPENSSH PRIVATE KEY-----
+
+# Check ansible directory exists
+ls -la ~/ansible/
+----
+
+==== Verify OS Release
+
+[source,bash]
+----
+cat /etc/os-release
+
+# Output:
+# NAME="Red Hat Enterprise Linux"
+# VERSION="10.1 (Coughlan)"
+# ID="rhel"
+# VERSION_ID="10.1"
+# PLATFORM_ID="platform:el10"
+----
+
+=== Inventory Configuration
+
+Create the Ansible inventory file with the private IPs of the Managed Nodes:
+
+[source,bash]
+----
+cat > ~/ansible/inventory.ini << 'EOF'
+[managed_nodes]
+10.0.1.101
+10.0.2.50
+
+[all:vars]
+ansible_user=ec2-user
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+EOF
+----
+
+Verify inventory is readable:
+
+[source,bash]
+----
+cat ~/ansible/inventory.ini
+ansible-inventory -i ~/ansible/inventory.ini --list
+----
+
+=== Ad-Hoc Commands Testing
+
+==== 1. Ping Module
+
+Test SSH connectivity to all Managed Nodes:
+
+[source,bash]
+----
+ansible -i ~/ansible/inventory.ini managed_nodes -m ping
+----
+
+**Output:**
+
+[source,text]
+----
+10.0.2.50 | SUCCESS => {
+    "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python3"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+10.0.1.101 | SUCCESS => {
+    "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python3"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+----
+
+==== 2. Uptime Command
+
+Check uptime on all Managed Nodes:
+
+[source,bash]
+----
+ansible -i ~/ansible/inventory.ini managed_nodes -m command -a "uptime"
+----
+
+**Output:**
+
+[source,text]
+----
+10.0.2.50 | CHANGED | rc=0 >>
+ 23:23:49 up 3 min,  2 users,  load average: 0.35, 0.35, 0.15
+10.0.1.101 | CHANGED | rc=0 >>
+ 23:23:49 up 3 min,  2 users,  load average: 0.30, 0.34, 0.16
+----
+
+==== 3. Network Configuration
+
+Display network interfaces on all Managed Nodes:
+
+[source,bash]
+----
+ansible -i ~/ansible/inventory.ini managed_nodes -m command -a "ip a"
+----
+
+**Output:** (Managed Node 10.0.2.50)
+
+[source,text]
+----
+2: ens5: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9001 qdisc mq state UP group default qlen 1000
+    link/ether 02:66:6b:57:65:cb brd ff:ff:ff:ff:ff:ff
+    inet 10.0.2.50/24 brd 10.0.2.255 scope global dynamic noprefixroute ens5
+       valid_lft 3412sec preferred_lft 3412sec
+----
+
+==== 4. SSH Service Status
+
+Check SSH daemon status with elevated privileges:
+
+[source,bash]
+----
+ansible -i ~/ansible/inventory.ini managed_nodes -m command -a "systemctl status sshd" --become
+----
+
+**Output:** (Managed Node 10.0.1.101)
+
+[source,text]
+----
+● sshd.service - OpenSSH server daemon
+     Loaded: loaded (/usr/lib/systemd/system/sshd.service; enabled; preset: enabled)
+     Active: active (running) since Mon 2026-04-13 23:22:10 UTC; 3min 0s ago
+   Main PID: 10224 (sshd)
+----
+
+==== 5. Firewall Configuration
+
+Display active firewall zones and rules (requires sudo):
+
+[source,bash]
+----
+ansible -i ~/ansible/inventory.ini managed_nodes -m command -a "firewall-cmd --list-all" --become
+----
+
+**Output:** (Both Managed Nodes)
+
+[source,text]
+----
+public (default, active)
+  target: default
+  icmp-block-inversion: no
+  interfaces: ens5
+  sources:
+  services: cockpit dhcpv6-client ssh
+  ports:
+  protocols:
+  forward: yes
+  masquerade: no
+----
+
+=== Key Takeaways
+
+- **IaC Automation**: 100% infrastructure provisioned via Terraform — no manual steps
+- **SSH Automation**: Private key injected via Terraform provisioners, not copied manually
+- **Private Subnets**: Managed Nodes in private subnets with NAT Gateway — production-like
+- **Ansible Ready**: Control Node configured and ready for playbooks/roles
+- **Repeatability**: Entire stack can be destroyed and recreated in ~5 minutes with `terraform apply`
+
+== Section03: Mastering Ansible Inventory and _ansible-navigator_
+
+- Static inventories, is good for small setups
+. A fixed list of hosts you write yourself
+. Good for small setups
+
+.Sample of Static Inventory List
+
+[source,text]
+----
+[web]
+192.168.1.10
+192.168.1.11
+
+[database]
+192.168.1.20
+192.168.1.30
+db3.example.com
+----
+
+- Dynamic Inventories
+. Automatically gets hosts from cloud providers or other resources
+. Useful for changing Environments
+[source,bash]
+----
+ansible -i my_inventory.ini all -m ping
+----
+
+[source,bash]
+----
+ls -ltr /etc/ansible/hosts
+vi /etc/ansible/hosts
+
+# Shows the servers stored in hosts file
+ansible --list-hosts all
+# Shows the servers stored in hosts file of Prod group
+ansible --list-hosts Prod
+# Shows the servers stored in hosts file of serverip group
+ansible --list-hosts serverip
+# Shows the servers stored in hosts file of servername group
+ansible --list-hosts servername
+----
+
+.hosts File Edited
+[source,text]
+----
+[Prod]
+server1
+server2
+server3
+
+[Stage]
+server4
+server12
+
+[web]
+server14
+
+[db]
+# ssh 22 default port, but some ways in diff port (12345)
+dbxxx.123:12345 ansible_user=sam
+web1.example.com ansible_port=2222
+
+[serverip]
+192.168.1.[1:20]
+
+[servername]
+server[01:10].mycompany.com
+----
+
+=== Ansible Navigator
+
+Is a command-line tool with a text user interface (TUI) that helps you run Ansible playbooks; browse inventory, review logs, and manage automation workflows more easily - especially when using Ansible Automation Platform on *RHEL9*.
+
+- Key features
+
+.. Run playbooks interactively on in quiet mode
+.. View inventories, playbook structure, task details, and output logs
+.. Browse Ansible collections and documentation
+.. Supports YAML-formatted settings files for customization
+
+.Navigator Modes
+[cols="1,1,1"]
+|===
+|Mode |Sample |Description
+
+|Run
+|`ansible-navigator run `playbook.yml`
+|Run playbook interactively
+
+|Inventory
+|`ansible-navigator inventory
+|Explore Inventory structure
+
+|Collections
+|`ansible-navigator` collections
+|View installed Ansible collections
+
+|Doc
+|`ansible-navigator` doc `ansible.builtin.ping`
+|View module Collections
+
+|===
+
+.Navigator Modes
+[cols="1,1,2"]
+|===
+
+|Feature
+|ansible-playbook
+|ansible-navigator
+
+|Tool Type
+|Traditional CLI tool
+|Modern TUI/CLI tool for ansible Automation Platform
+
+|Interface
+|Plain terminal output
+|Text-based user Interface (TUI)
+
+|Execution Method
+|Runs directly on the system
+|Uses Execution Environment (_container-based_)
+
+|Output
+|Plain text
+|Structure View (tasks, plays, logs, etc)
+
+|Ease to Debugging
+|☑ Yes
+|☑ Yes
+
+|Support Browsing Inventory
+|☐ No
+|☑ Yes
+
+|Module Documentation
+|`ansible-doc` (separate command)
+|Built-in command: doc inside navigator
+
+|Recommend for
+|Traditional users, simple tasks
+|RH294, AAP 2.x users, container-based setup
+|===
+
+- installing ansible-navigator (usin pip over scripts folder)
+
+`pip install ansible-navigator --user`
+ansible navigator --version >> output txt
+
+- setting-up ansible-navigator, before we need install podman or docker, this should be create over control-node.sh
+
+sudo dnf install podman
+
+podman version >> output txt
+
+[Interactive]
+ansible-navigator
+
+- view inventory with ansible-navigator (stdout mode)
+
+less /etc/ansible/hosts (create all list additional ec2)
+
+ansible-navigator inventory -i /etc/ansible/hosts --mode stdout --list
+
+ansible-navigator inventory -i /etc/ansible/hosts --mode stdout --graph [group-name]
+
+- explore inventory in TUI Mode using ansible-navigator
+
+ansible [hit enter]
+
+[source,sourcegraph]
+----
+:inventory -i /etc/ansible/hosts
+----
+
+=== Manage Ansible Configuration files
+
+We can manage the behavior of Ansible and the ansible-navigator command using two configurations
+
+- `ansible.cfg` - Defines settings that control the behavior of various Ansible tools commonly installed over `/etc/ansible/ansible.cfg`
+
+- `ansible-navigator.yml` - Specifies default options and preferences specifically for the ansible-navigator command
+
+- creating a .cfg file over home users using bash or script automation
+
+[source,bash]
+----
+vi .ansible
+----
+
+.Inside .ansible file content
+[source,text]
+----
+[defaults]
+inventory = /home/ec2-user/inventory.ini
+remote_user =  ec2_user
+host_key_checking=false
+retry_files_enabled = false
+----
+
+[source,bash]
+----
+ansible --list-hosts all
+ansible --list-hosts [group]
+ansible-navigator inventory -i /home/ec2-user/inventory.ini --mode stdout --graph dev
+----
+
+.Home EC2 user dir
+[source,bash]
+----
+vi ansible-navigator.yml
+----
+
+.Ansible Navigator Yml File Content
+[source,yaml]
+----
+ansible-navigator:
+  execution-environment:
+    enabled: false
+
+#ansible-navigator:
+#  execution-environment:
+#    container-engine: podman  # ou docker
+
+#ansible-navigator:
+# enabled: false
+#  image: ghcr.io/ansible/createor-ee:latest
+#  pull:
+#   policy: missing
+
+----
+
+.Scenario Based Guided Lab
+****
+As DevOps Engineer working on an Ansible automation project hosted on a RHEL9 server (Ansible control node).
+
+Your goal is to validate connectivity from the ansible server to the client machines using the Ansible Navigator tool
+
+Your organization wants to demonstrate the use of the ansible-navigator command with two different execution strategies:
+
+- Containerized Execution - Using the execution environment (EE) enabled
+- Non-Containerized Execution - Running directly on the host system with the EE disable
+
+You are provided with the following files and setup
+
+- `ansible-navigator.yml`- Navigator configuration file
+- `ping.yml` - Ansible playbook to ping hosts
+- `inventory.yml` - Inventory file with the *[dev]* group containing two client IP addresses.
+
+Req - Pod installed and the system (EC2 has internet connectivity)
+****
+
+== Section 07 Implementing a Ansible Playbook
+
+- What is a Ansible Playbook: Is a plaintext file written in YAML format that defines a series of automation instructions (called tasks) to be executed on or more remote hosts.
+
+- Playbooks are a core feature of Ansible used to describe "what" needs to be done, rather than "how" to do it.
+
+- Each task in a playbook is performed using Ansible modules.
+
+.Key Components of a Playbook
+[cols="1,1"]
+|===
+|Component|Description
+
+|name
+|Description of play or task
+
+|hosts
+|Target systems or group from the inventory
+
+|tasks
+|List of automation steps
+
+|become
+|Use `sudo` privileges if needed
+
+|vars
+|Define custom variables (optional)
+|===
+
+.Simple Ansible Playbook (user.yml)
+[source,text]
+----
+---
+- name: Ensure user exists
+  hosts: dev
+  remote_user: ec2-user
+  become: yes
+
+  tasks:
+    - name: Create user 'devops'
+      ansible.builtin.user:
+       name: devops
+       state: present
+----
+
+.Check if user exists Playbook
+[source,bash]
+----
+pwd
+# /home/ansible/playbooks
+
+# paste the source here
+vi user.yml
+
+# check syntax
+ansible-playbook --syntax-check user.yml
+ansible-playbook user.yml
+#
+# same exercise using ansible navigator
+# image: ghcr.io/ansible/creator-ee.latest
+:run /home/ec2-user/plabooks/user.yml -i /home/ec2-user/invetory.ini
+----
+
+.Directory Creation using Playbook
+[source,yml]
+----
+---
+- name: Directory Creation
+  hosts: dev
+  become: yes
+  remote_user: ec2-user
+
+  tasks:
+    - name: Create a directory /opt/scripts
+      ansible.builtin.file
+        path: /opts/scripts
+        state: directory
+        mode: '0755'
+----
+
+[source,bash]
+----
+vi dir.yml
+#
+ansible-playbook --syntax-check dir.yml
+ansible-navigator
+#
+:run /home/ec2-user/playbooks/dir.yml -i /home/ec2-user/iventory/inventory.ini
+
+----
+
+== Section08: Ansible Vars and Facts
+
+- Variables are used to store values that can be reused throughout Playbooks
+
+- Help to customize configurations for different systems without rewriting code
+
+- You can define variables for _hostnames, file paths, user-names, passwords, packages etc_
+
+- Variables are defined using YAML _syntax_, and they support data types like strings, numbers, lists and directories
+
+- We can use `double curl braces` to access the variable, e.g: `{{ variable_name }}`
+
+- Variable can be defined in: Playbooks, Inventory files, Host/groups variable files, command-line with --extra-vars
+
+- Some important rules when creating variables are:
+
+** start with letter
+** no spaces, no spec chars
+** case-sensitive
+
+.Sample Variables
+[source,text]
+----
+my_var: "Value"
+user_name: "admin"
+package_version: "1.34"
+----
+
+.Sample Variable in inventory.ini
+[source,text]
+----
+[prod]
+server1
+server2
+server3
+
+[prod:vars]
+A=100
+http_port=80
+----
+
+[source,bash]
+----
+ansible prod -i inventory.ini -m debug -a "var=A, http_port"
+----
+
+.Group Variables
+[source,text]
+----
+[Prod]
+server1
+server2
+server3
+----
+
+.Group Vars File
+[source,bash]
+----
+mkdir group_vars
+vi Prod.yml
+# inside the Prod.yml file
+
+# C:200
+# http_port: 443
+# doc_root: /var/www/html
+
+ansible Prod -i /home/ec2-user/projects/inventory.ini -m debug -a "var=C,http_port,doc_root"
+
+# additional var usage
+ansible-playbook p0.yml -i inventory.ini --mode stdout -e "additional_var=123"
+----
+
+.Playbook Vars sample
+[source,text]
+----
+- hosts: dev
+  vars:
+    message: "Hello,"
+    user_info:
+        name: john
+        uid: 1223
+        shell: /bin/bash
+
+  tasks:
+    - name: Task 1 - Use the variable
+      vars:
+        msg_local: "bla"
+      debug:
+        msg: "{{ message }}- {{ msg_local }} - {{ user_info.name }}"
+----
+
+== Section09: Secrets in Ansibles
