@@ -729,4 +729,26 @@ ansible-playbook p0.yml -i inventory.ini --mode stdout -e "additional_var=123"
         msg: "{{ message }}- {{ msg_local }} - {{ user_info.name }}"
 ----
 
-== Section09: Secrets in Ansibles
+== Section09: Secrets in Ansible
+
+In automation, you often need to handle *sensitive informations* like password,  sensitive keys, API Keys, tokens etc. Ansible provides tools to *securely manage* these secrets without exposing them in plain text;
+
+- Ansible Vault: Passwords, Private Keys, Cloud Credentials, Encrypt entire files or spec variables
+
+.De/Encrypting a file
+[source, bash]
+----
+ansible-vault encrypt secret.yml
+#
+ansible-vault decrypt secret.yml
+#
+ansible-playbok site.yml --ask-vault-pass
+#
+ansible-vault create myplay.yml
+# should provide a password and create a playbook file
+# to view file
+ansible-vault view myplay.yml
+# provides the password
+----
+
+== Section10: Task Control implementation in Ansible
