@@ -1,0 +1,24 @@
+---
+- name: Create users loop over list of dictionaries
+  hosts: dev
+  become: yes # Run as root privileges
+  gather_facts: false # Turn off facts gathering to make playbooks faster, avoid system info
+
+  vars:
+    users:
+      - { name: "alice", group: "admin" }
+      - { name: "bob", group: "dev" }
+      - { name: "john", group: "qa" }
+    tasks:
+      - name: Ensure group exists
+        ansible.builtin.group:
+          name: "{{ item.group }}"
+          state: present
+        loop: "{{ users }}"
+
+      - name: Create user accounts
+        ansible.builtin.user:
+          name: "{{ item.name }}"
+          group: "{{ item.group }}"
+          state: present
+        loop: "{{ users }}"

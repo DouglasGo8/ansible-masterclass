@@ -1,0 +1,24 @@
+---
+- name: Create temporary files and register results
+  hosts: dev
+  become: true
+
+  vars:
+    files:
+      - /tmp/tmp1.txt
+      - /tmp/tmp2.txt
+      - /tmp/tmp3.txt
+
+  tasks:
+    - name: Create empty temp files
+      ansible.builtin.file:
+        path: "{{ item }}" # taking the value from the loop
+        state: touch
+        mode: '0644'
+      loop: "{{ files }}"
+      register: file_creation_results
+
+    - name: Show result of each file creation
+      debug:
+        msg: "File {{ item.item }} created"
+      loop: "{{ file_creation_results.results }}"

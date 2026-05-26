@@ -731,12 +731,13 @@ ansible-playbook p0.yml -i inventory.ini --mode stdout -e "additional_var=123"
 
 == Section09: Secrets in Ansible
 
-In automation, you often need to handle *sensitive informations* like password,  sensitive keys, API Keys, tokens etc. Ansible provides tools to *securely manage* these secrets without exposing them in plain text;
+In automation, you often need to handle *sensitive informations* like password, sensitive keys, API Keys, tokens etc.
+Ansible provides tools to *securely manage* these secrets without exposing them in plain text;
 
 - Ansible Vault: Passwords, Private Keys, Cloud Credentials, Encrypt entire files or spec variables
 
 .De/Encrypting a file
-[source, bash]
+[source,bash]
 ----
 ansible-vault encrypt secret.yml
 #
@@ -752,3 +753,70 @@ ansible-vault view myplay.yml
 ----
 
 == Section10: Task Control implementation in Ansible
+
+- Loops in Ansible let you run the same task multiple times and with different values, this helps us avoid writing the same task again
+
+- For example, we need to install multiple packages like `httpd, `git`, and `wget` you can use the loop keyword
+
+- We use loops to: avoid repetitive similar tasks re-writing, to handle lists likes user, packages or services, to keep playbooks clean, short and easy to maintain
+
+.Task Loop Playbook Sample (p9.yml)
+[source,yaml]
+----
+---
+- name: Install common packages on dev servers
+  hosts: dev
+  become: true
+
+  tasks:
+    - name: Install multiple packages
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - nginx
+        - git
+        - curl
+----
+
+.Run ansible over p9.yml
+[source,bash]
+----
+ansible-navigator run p9.yml -m stdout -i /home/projects/inventory.ini -u ec2-user
+#
+----
+
+.Task Loop Playbook Sample with Variable List (p10.yml)
+[source,yaml]
+----
+---
+- name: Install common packages on dev servers
+  hosts: all
+  become: true
+  vars:
+    mail_services:
+      - postfix
+      - dovecot-core
+      - dovecot-imapd
+  tasks:
+    - name: Install multiple packages
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ mail_services }}"
+----
+
+.Run ansible over p10.yml
+[source,bash]
+----
+ansible-navigator run p10.yml -m stdout -i /home/projects/inventory.ini -u ec2-user
+# on Woker/Client EC2 Instance
+dpkg -l | grep postfix
+----
+
+.Sample how to install loops over dictionaries
+[source, bash]
+----
+ansible-navigator run playbooks/dict-loop.yml -m stdout -i /home/projects/inventory.ini -u ec2-user
+----
+
