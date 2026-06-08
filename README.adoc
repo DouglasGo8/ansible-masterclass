@@ -820,3 +820,38 @@ dpkg -l | grep postfix
 ansible-navigator run playbooks/dict-loop.yml -m stdout -i /home/projects/inventory.ini -u ec2-user
 ----
 
+== Section11: Task Control implementation in Ansible
+
+- Ansible can use conditionals to run tasks or plays when certain conditions are met; For example, you can use a conditional to determine available memory on a managed host before ansible installs or configures a service
+
+- Conditionals let you tell Ansible to run a task only if certain are true
+
+- Sometimes you want a task to run only when specific conditions are met - like only if a server has enough free memory, or only certain types of machines
+
+- What cane you test?
+** Variables you define in the playbook
+** Variables saved using register from other tasks
+** Facts gathered automatically about the host (like OS type, memory IP, etc)
+
+[source, yaml]
+----
+- name: Install nginx only on Debian systems
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+  when: ansible_os_family == "Devin"
+----
+
+== Section12: Deploying Files to Managed Hosts
+
+- File Modules are used to manage files, directories, and symbolic links on remote machines
+- They help automate file creation, modification, valition and delation in a reliable, repetable way
+- All modules described below are part of the ansible.builtin collectin, so they don't require any extra installation
+
+- Commonly Use File Modules
+
+** #`file:`# _create/delete files_: directories, or symlinks; set permissions and ownership
+** #`copy:`# _copy_ files from your control machine to the remote host
+** #`fetch:`# _retrieve_ files from he remote host to your local machine
+** #`lineinfile:`# _ensures_ a specific line is present, updated, or removed in a file, allowing you to add or modify content line-by-line
+** #`blockinfile:`# _insert, update or remove_ a block of lines in a file
