@@ -1,0 +1,19 @@
+---
+- hosts: server
+  become: true
+  become_user: root
+  tasks:
+    - name: Configure a coust /etc/motd
+      template:
+        src: sample.j2
+        dest: /etc/motd
+        owner: root
+        group: root
+        mode: 0644
+    - name: Check file stat
+      stat:
+        path: /etc/motd
+      register: motd
+    - name: Display the result
+      debug:
+        var=motd

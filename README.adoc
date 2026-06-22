@@ -839,7 +839,7 @@ ansible-navigator run playbooks/dict-loop.yml -m stdout -i /home/projects/invent
   ansible.builtin.apt:
     name: nginx
     state: present
-  when: ansible_os_family == "Devin"
+  when: ansible_os_family == "Debian"
 ----
 
 == Section12: Deploying Files to Managed Hosts
@@ -855,3 +855,81 @@ ansible-navigator run playbooks/dict-loop.yml -m stdout -i /home/projects/invent
 ** #`fetch:`# _retrieve_ files from he remote host to your local machine
 ** #`lineinfile:`# _ensures_ a specific line is present, updated, or removed in a file, allowing you to add or modify content line-by-line
 ** #`blockinfile:`# _insert, update or remove_ a block of lines in a file
+
+
+== Section13: Deploy Custom Files with Jinja2 Templates
+
+Jinja2 Templates is powerful way to manage files over templates, we can write a template configuration file that is automatically customized for the managed host, Jinja2 templates is composed by multiple elements: _data, variables and expression_. Those variables and expressions are replaced with their values when the Jinja2 template is rendered. The variables used in the template can be spcified in the vars sections of the playbook. It is possible to use the manged hosts' facts as varavles on a template
+
+
+.File Jinja2 sample.j2
+[source, text]
+----
+{{ variable1 }}
+---
+{{ variable2 }}
+---
+{% for n in [0, 1, 2] %}
+{{ n }}
+{ endfor }
+---
+{% for item in list1 %}
+  {{ item }}
+{% endfor %}
+
+---
+{% for item in vlan %}
+  {{ item.id }} {{ item.name }}
+{% endfor %}
+----
+
+.Playbook file1.yml with sample.j2 ref
+[source, yaml]
+----
+---
+hosts: server
+vars
+  variable1: 'Hello...!!!'
+  variable2: 'My first playbook using template'
+tasks:
+  - name: Basic Template Example
+    template:
+      src: sample.j2
+      dest: /home/ec2-user/output/output.txt
+----
+
+.Playbook file2.yml with sample.j2 ref
+[source, yaml]
+----
+---
+hosts: server
+vars
+  list1: ['Apple', 'Banana', 'Cat', 'Dog']
+  vlan:
+    - id: 10
+      name: LB
+tasks:
+  - name: Basic Template Example
+    template:
+      src: sample.j2
+      dest: /home/ec2-user/output/output2.txt
+----
+
+[source, bash]
+----
+$ ansible-playbook file1.yml
+$ ansible-playbook file2.yml
+----
+
+== Section14: Managing Complex Plays and Playbooks
+
+When running Ansible playbooks, you can choose which systems (hosts) to target using host patterns. These patterns helps you apply tasks to the machines you want - saving time and resources, using hosts patterns
+
+=== What are Hosts Patterns
+
+* Host patterns are used in the hosts: field of a playbook to:
+.. Include specific hosts or groups
+.. Exclude certain hosts
+.. Combine multiple groups
+
+IMPORTANT: Theres is important concept do divide complex playbooks using include and import files
